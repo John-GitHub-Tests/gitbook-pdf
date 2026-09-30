@@ -1,0 +1,380 @@
+name: 'Generate GitBook PDF'
+description: >-
+  Render one GitBook-synced space (a directory with a SUMMARY.md) into a
+  print-quality, bookmarked, cross-linked PDF. Pick the directory, get a PDF.
+author: 'GitBook'
+branding:
+  icon: 'file-text'
+  color: 'blue'
+
+inputs:
+  space:
+    description: >-
+      The directory in this checkout to build, e.g. "docs" -- must contain a
+      SUMMARY.md.
+    required: true
+  out-dir:
+    description: 'Directory to write the PDF and its manifest into.'
+    required: false
+    default: 'dist'
+  output-name:
+    description: >-
+      PDF filename, e.g. "handbook.pdf". Defaults to the space path with "/"
+      replaced by "-" (space "docs" gives docs.pdf).
+    required: false
+    default: ''
+  web-base:
+    description: >-
+      Public URL the documentation is published at, used to rewrite outbound
+      links. Overrides webBase in config-file; leave unset to fall back to
+      it.
+    required: false
+    default: ''
+  config-file:
+    description: >-
+      Path (relative to the checkout, or absolute) to an optional JSON file
+      with webBase/spaceTitles/spaceIds/copyrightHolder/coverSubtitle. A
+      missing file is not an error. See pdf/README.md.
+    required: false
+    default: 'pdf.config.json'
+  cover:
+    description: >-
+      Cover treatment: blue or light. Ignored if cover-color is set.
+    required: false
+    default: 'blue'
+  cover-color:
+    description: >-
+      Custom cover background as a 6-digit hex color, e.g. "#918BF7".
+      Overrides cover. Text color is picked automatically -- whichever of
+      ink or white contrasts better against it -- and a warning is printed
+      to the build log if that still falls short of WCAG AA (some colors
+      have no good pairing with either). If cover-image is also set, tints
+      its scrim instead of the background.
+    required: false
+    default: ''
+  cover-image:
+    description: >-
+      Cover background photo, relative to the checkout (or absolute).
+      Overrides cover/cover-color as a background. Rendered under a
+      translucent scrim (black by default, or cover-color's hue) with text
+      chosen for that scrim, since an arbitrary photo's own contrast can't
+      be verified the way a flat color can.
+    required: false
+    default: ''
+  logo-path:
+    description: >-
+      Cover-page logo file in your repo (SVG, PNG, JPEG, WebP or GIF),
+      relative to the checkout, e.g. "assets/logo.png". Unset renders no
+      logo; a path that doesn't exist fails the build.
+    required: false
+    default: ''
+  stylesheet:
+    description: >-
+      Extra CSS file, relative to the checkout (or absolute), appended after
+      the built-in stylesheet. Every color in pdf/style.css is a :root custom
+      property, so a brand palette is a few overrides, e.g.
+      ":root { --blue: #0043CE; --blue-deep: #002D9C; }". The built-in
+      WCAG contrast check only covers the default palette.
+    required: false
+    default: ''
+  version-label:
+    description: >-
+      Cover-page snapshot text, e.g. "Snapshot 2026-08". Defaults to today's
+      date; set no-version-label to omit it entirely instead.
+    required: false
+    default: ''
+  no-version-label:
+    description: 'Omit the cover-page snapshot label entirely.'
+    required: false
+    default: 'false'
+  no-optimize:
+    description: 'Skip the qpdf lossless size pass.'
+    required: false
+    default: 'false'
+  strict:
+    description: >-
+      Fail the step if any content check (unconverted GitBook markers, dead
+      links, unresolved relative links) is non-zero.
+    required: false
+    default: 'true'
+  verify:
+    description: >-
+      Assert structural properties of the produced PDF: page count, no
+      broken/file:// links, a document outline, and clickable internal
+      cross-references.
+    required: false
+    default: 'true'
+  pandoc-version:
+    description: 'Pinned pandoc release to install.'
+    required: false
+    default: '3.10.1'
+  mermaid-version:
+    description: >-
+      Pinned Mermaid release to fetch for diagram rendering. Also the cache
+      key for that download -- surfaced as an input rather than left as
+      pdf/fetch-deps.sh's own internal default so bumping it invalidates the
+      cache correctly instead of silently reusing a stale bundle.
+    required: false
+    default: '11.16.1'
+
+outputs:
+  dist-dir:
+    description: 'The out-dir this run wrote into.'
+    value: ${{ steps.build.outputs.dist-dir }}
+  pdf-path:
+    description: 'Path to the produced PDF.'
+    value: ${{ steps.build.outputs.pdf-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check runner OS
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${{ runner.os }}" != "Linux" ]]; then
+          echo "::error::This action installs Chrome and pandoc via apt/.deb" \
+               "packages and only runs on Linux runners (e.g. ubuntu-latest)." \
+               "Runner OS was: ${{ runner.os }}"
+          exit 1
+        fi
+
+    # actions/cache rejects any path containing a '.'/'..' segment, and
+    # github.action_path literally has a trailing '/.' when this action is
+    # referenced as `uses: ./` (this repo's own CI does
+    # exactly that) -- silently: the two caches below it broke this way
+    # with only a build-log warning, no error, until this normalizes it.
+    - id: paths
+      name: Resolve this action's own path
+      shell: bash
+      run: echo "action-path=$(realpath "${{ github.action_path }}")" >> "$GITHUB_OUTPUT"
+
+    # Pinned by version, so the cache never goes stale -- a version bump is
+    # a new key, not an invalidation. Only the download is cached; the
+    # apt-get install below still runs every time (dpkg's own unpack/setup
+    # work, not avoidable without bypassing dpkg -- not worth that risk for
+    # what's the smaller half of this step's time anyway).
+    - name: Cache pandoc download
+      uses: actions/cache@v6
+      with:
+        path: /tmp/pandoc-${{ inputs.pandoc-version }}-1-amd64.deb
+        key: pandoc-deb-${{ inputs.pandoc-version }}
+
+    - name: Install pandoc ${{ inputs.pandoc-version }}
+      shell: bash
+      env:
+        PANDOC_VERSION: ${{ inputs.pandoc-version }}
+      run: |
+        set -euo pipefail
+        deb="pandoc-${PANDOC_VERSION}-1-amd64.deb"
+        if [[ ! -f "/tmp/${deb}" ]]; then
+          url="https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/${deb}"
+          curl -fsSL -o "/tmp/${deb}" "$url"
+        fi
+        sudo apt-get install -y "/tmp/${deb}"
+        pandoc --version | head -1
+
+    # The .deb from Google rather than the apt or snap chromium package, whose
+    # sandboxing makes --headless --print-to-pdf unreliable on runners.
+    - name: Install Google Chrome
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL -o /tmp/chrome.deb \
+          https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt-get install -y /tmp/chrome.deb
+        google-chrome-stable --version
+
+    # qpdf: lossless size pass that preserves links, destinations and the
+    # document outline. poppler-utils: pdfinfo, for page counts.
+    - name: Install qpdf and poppler
+      shell: bash
+      run: sudo apt-get install -y qpdf poppler-utils
+
+    - name: Verify WCAG AA contrast
+      shell: bash
+      run: python3 "${{ github.action_path }}/pdf/check_contrast.py"
+
+    - name: Cache Mermaid bundle
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.paths.outputs.action-path }}/pdf/vendor/mermaid.min.js
+        key: mermaid-bundle-${{ inputs.mermaid-version }}
+
+    - name: Fetch Mermaid bundle
+      shell: bash
+      env:
+        MERMAID_VERSION: ${{ inputs.mermaid-version }}
+      run: "${{ github.action_path }}/pdf/fetch-deps.sh"
+
+    # Grows over time as new icon names turn up, unlike the two caches above:
+    # a fixed key would only ever save once (actions/cache never overwrites
+    # an existing key), silently freezing the cache at whatever it held on
+    # the first run. A key unique per run *and* per space always saves --
+    # per-space because a matrix build's jobs share one run id and would
+    # otherwise all race to save the same key, and only the first to finish
+    # would win. restore-keys still finds the most recent prior save (any
+    # space, any run) as a prefix match, so a repeat icon is still a cache
+    # hit even though the exact key never matches twice.
+    - name: Cache Font Awesome icons
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.paths.outputs.action-path }}/pdf/vendor/fontawesome
+        key: fontawesome-icons-${{ github.run_id }}-${{ inputs.space }}
+        restore-keys: |
+          fontawesome-icons-
+
+    - id: build
+      name: Build ${{ inputs.space }} PDF
+      shell: bash
+      env:
+        SPACE: ${{ inputs.space }}
+        OUT_DIR: ${{ inputs.out-dir }}
+        WEB_BASE: ${{ inputs.web-base }}
+        CONFIG_FILE: ${{ inputs.config-file }}
+        COVER: ${{ inputs.cover }}
+        COVER_COLOR: ${{ inputs.cover-color }}
+        COVER_IMAGE: ${{ inputs.cover-image }}
+        LOGO_PATH: ${{ inputs.logo-path }}
+        STYLESHEET: ${{ inputs.stylesheet }}
+        OUTPUT_NAME: ${{ inputs.output-name }}
+        VERSION_LABEL: ${{ inputs.version-label }}
+        NO_VERSION_LABEL: ${{ inputs.no-version-label }}
+        NO_OPTIMIZE: ${{ inputs.no-optimize }}
+        STRICT: ${{ inputs.strict }}
+      run: |
+        set -euo pipefail
+        args=(python3 "${{ github.action_path }}/pdf/build.py" "$SPACE"
+              --out-dir "$OUT_DIR" --config "$CONFIG_FILE" --cover "$COVER")
+        [[ -n "$WEB_BASE" ]] && args+=(--web-base "$WEB_BASE")
+        [[ -n "$LOGO_PATH" ]] && args+=(--logo "$LOGO_PATH")
+        [[ -n "$COVER_COLOR" ]] && args+=(--cover-color "$COVER_COLOR")
+        [[ -n "$COVER_IMAGE" ]] && args+=(--cover-image "$COVER_IMAGE")
+        [[ -n "$STYLESHEET" ]] && args+=(--css "$STYLESHEET")
+        [[ -n "$OUTPUT_NAME" ]] && args+=(--output-name "$OUTPUT_NAME")
+        if [[ "$NO_VERSION_LABEL" == "true" ]]; then
+          args+=(--version-label "")
+        elif [[ -n "$VERSION_LABEL" ]]; then
+          args+=(--version-label "$VERSION_LABEL")
+        fi
+        [[ "$NO_OPTIMIZE" == "true" ]] && args+=(--no-optimize)
+        [[ "$STRICT" == "true" ]] && args+=(--strict)
+        # build.py appends pdf-path to $GITHUB_OUTPUT itself, so the filename
+        # rule lives in one place rather than being re-derived here.
+        "${args[@]}"
+        echo "dist-dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+    # Everything below asserts on the artifact rather than on the build log.
+    # A bad link is invisible in a 300-page PDF -- it looks like a working
+    # link right up until someone clicks it -- so the checks read the file
+    # that will actually be published.
+    - name: Verify the PDF
+      if: inputs.verify == 'true'
+      shell: bash
+      env:
+        PDF: ${{ steps.build.outputs.pdf-path }}
+        STRICT: ${{ inputs.strict }}
+      run: |
+        set -euo pipefail
+        pdf="$PDF"
+        manifest="${pdf%.pdf}.json"
+        [[ -s "$pdf" ]] || { echo "::error::$pdf missing or empty"; exit 1; }
+
+        pages=$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')
+        docs=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['doc_pages'])" "$manifest")
+        echo "$pdf -> $pages PDF pages from $docs documentation pages, $(du -h "$pdf" | cut -f1)"
+
+        # Every documentation page should yield at least one printed page.
+        # Falling under that means the SUMMARY parse or the preprocessor
+        # silently dropped most of the space. Comparing against the space's
+        # own page count works for a two-page space and a thousand-page one,
+        # where a hardcoded floor would falsely fail the small one.
+        if (( pages < docs )); then
+          echo "::error::only $pages PDF pages for $docs documentation pages -- build looks broken"
+          exit 1
+        fi
+
+        # qpdf --qdf expands the object streams so the link annotations are
+        # greppable. Written to a file rather than a shell variable: the
+        # expansion is several times the size of the PDF. qpdf exits 3 on
+        # recoverable warnings and still writes valid output, so its status is
+        # not the signal here -- the file being non-empty is.
+        qpdf --qdf --object-streams=disable "$pdf" /tmp/qdf.pdf 2>/dev/null || true
+        [[ -s /tmp/qdf.pdf ]] || { echo "::error::qpdf could not expand $pdf"; exit 1; }
+
+        # A `/broken/...` destination is GitBook's marker for a dead internal
+        # reference; the preprocessor unlinks them, so one reaching the
+        # artifact means an unrecognized link shape got through.
+        if grep -aoE '/URI *\([^)]*/broken/[^)]*\)' /tmp/qdf.pdf | sort -u > /tmp/broken.txt \
+           && [[ -s /tmp/broken.txt ]]; then
+          echo "::error::$(wc -l < /tmp/broken.txt) dead /broken/ link(s) reached $pdf"
+          head -5 /tmp/broken.txt
+          exit 1
+        fi
+
+        # A `file://` destination points at this runner's disk and means an
+        # asset link was published instead of being unlinked.
+        if grep -aoE '/URI *\(file://[^)]*\)' /tmp/qdf.pdf | sort -u > /tmp/filescheme.txt \
+           && [[ -s /tmp/filescheme.txt ]]; then
+          echo "::error::$(wc -l < /tmp/filescheme.txt) file:// link(s) reached $pdf"
+          head -5 /tmp/filescheme.txt
+          exit 1
+        fi
+
+        # `app.gitbook.com` is GitBook's own editor -- it resolves for a
+        # logged-in editor, not a PDF reader. A surviving link there means a
+        # cross-space reference GitBook stores as an editor URL wasn't mapped
+        # to a real destination (see pdf.config.json's spaceIds in
+        # pdf/README.md). Generic across any GitBook space, unlike the check
+        # below: this domain isn't config-dependent.
+        #
+        # Gated by strict, not unconditional like /broken/ and file:// above:
+        # those two are always defects, but this space may legitimately
+        # reference another GitBook space nobody here can map -- a real
+        # product's docs a customer's content points at, say. build.py's own
+        # content checks (unresolved relative links, unconverted markers)
+        # draw the same line, and this is that same kind of check, just run
+        # against the artifact instead of the pre-render markdown.
+        if [[ "$STRICT" == "true" ]] \
+           && grep -aoE '/URI *\([^)]*app\.gitbook\.com[^)]*\)' /tmp/qdf.pdf | sort -u > /tmp/editorurls.txt \
+           && [[ -s /tmp/editorurls.txt ]]; then
+          echo "::error::$(wc -l < /tmp/editorurls.txt) app.gitbook.com editor link(s) reached $pdf"
+          head -5 /tmp/editorurls.txt
+          exit 1
+        fi
+
+        # A published site's own URL convention rarely keeps a page's `.md`
+        # suffix -- GitBook's own does not -- so one surviving into a link to
+        # web_base is usually a page that was rewritten to the wrong form.
+        # Some sites answer such a request with an HTTP 200 soft-404, so this
+        # asserts on the artifact rather than trusting a status-code check.
+        # Read from the manifest, not the web-base input, since the config
+        # file (not just that input) can be where it actually came from.
+        web_base=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('web_base') or '')" "$manifest")
+        if [[ -n "$web_base" ]]; then
+          escaped=$(printf '%s' "$web_base" | sed -E 's/[.[\*^$()+?{}|\\]/\\&/g')
+          if grep -aoE "/URI *\\(${escaped}[^)]*\\.md[)#]" /tmp/qdf.pdf | sort -u > /tmp/mdurls.txt \
+             && [[ -s /tmp/mdurls.txt ]]; then
+            echo "::error::$(wc -l < /tmp/mdurls.txt) site link(s) into $web_base still end in .md in $pdf"
+            head -5 /tmp/mdurls.txt
+            exit 1
+          fi
+        fi
+
+        # Bookmarks are what make a document this long navigable, and they
+        # come from a single Chrome flag -- easy to lose in a refactor and
+        # invisible unless you open the file in a reader.
+        grep -aq '/Outlines' /tmp/qdf.pdf || {
+          echo "::error::$pdf has no document outline (bookmarks)"; exit 1; }
+
+        # Internal cross-references are encoded as /Dest on a link annotation
+        # rather than a /GoTo action, so this is what "the contents list is
+        # clickable" actually looks like in the file.
+        dests=$(grep -ac '/Dest' /tmp/qdf.pdf || true)
+        echo "internal destinations: $dests"
+        if (( dests == 0 )); then
+          echo "::error::$pdf has no internal link destinations -- the contents list is dead"
+          exit 1
+        fi
+
+        rm -f /tmp/qdf.pdf

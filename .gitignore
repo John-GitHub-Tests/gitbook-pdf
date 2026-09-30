@@ -1,0 +1,11 @@
+.DS_Store
+
+# Generated PDFs and their build manifests.
+dist/
+
+# Fetched by pdf/fetch-deps.sh; several MB, and reproducible from the pinned
+# version in that script.
+pdf/vendor/
+
+__pycache__/
+*.pyc

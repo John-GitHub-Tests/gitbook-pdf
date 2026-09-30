@@ -1,0 +1,32 @@
+# Copy to .github/workflows/pdf-release.yml in your docs repo.
+#
+# Attaches a PDF of the docs to every GitHub release you publish, so each
+# release carries a snapshot of the documentation as it stood at that tag.
+
+name: Attach docs PDF to release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write               # to upload the release asset
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest      # the action needs a Linux runner
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pdf
+        uses: John-GitHub-Tests/gitbook-pdf@v1
+        with:
+          space: docs                     # directory containing SUMMARY.md
+          version-label: ${{ github.event.release.tag_name }}
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          PDF: ${{ steps.pdf.outputs.pdf-path }}
+        run: gh release upload "$TAG" "$PDF" --clobber

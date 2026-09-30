@@ -1,0 +1,512 @@
+/* Print stylesheet for the generated documentation PDFs.
+ *
+ * Every color here is asserted against WCAG 2.1 AA by pdf/check_contrast.py,
+ * which runs in CI. If you change a value, change it there too -- the two files
+ * are the contract, and the check exists because contrast is impossible to fix
+ * after a PDF ships.
+ *
+ * Three constraints shape the rest:
+ *
+ * - Chrome is the renderer, so `@page` margin boxes are unavailable: there are
+ *   no running headers and no page numbers. Navigation comes from the clickable
+ *   contents list and the real PDF outline (`--generate-pdf-document-outline`).
+ * - Anything that can be wider than the text column -- code, tables, images --
+ *   must be made to wrap or shrink. Print has no horizontal scrollbar, so
+ *   overflow is not a cosmetic problem, it is content silently cut off.
+ * - Color is never the only signal. Every callout carries a bold word ("Note:",
+ *   "Warning:"), so severity survives greyscale printing and color-vision
+ *   deficiency.
+ */
+
+:root {
+  --ink: #16202B;
+  --slate: #4A5567;
+  --blue: #2159CC;
+  --blue-deep: #103A8C;
+  --green: #1B6E45;
+  --amber: #8A5A00;
+  --red: #B3261E;
+  --teal: #0E7C86;
+
+  --info-bg: #EDF3FE;
+  --success-bg: #E8F5EE;
+  --warning-bg: #FDF3E3;
+  --danger-bg: #FCEDEC;
+  --neutral-bg: #F4F6F8;
+  --code-bg: #F5F7FA;
+  --thead-bg: #EDF1F6;
+  --rule: #D8DEE7;
+
+  --sans: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", "DejaVu Sans",
+          sans-serif;
+  --mono: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono",
+          monospace;
+}
+
+/* A4 rather than Letter: this documentation has a global audience, and A4 is
+ * the more widely printable of the two. */
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+}
+
+/* The cover is the one page that wants no margin, so its color reaches the
+ * paper edge instead of sitting in a white frame. Named pages are a Chrome
+ * feature; where they are unsupported the cover simply keeps the default
+ * margins and still renders correctly. */
+@page cover {
+  size: A4;
+  margin: 0;
+}
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 10.5pt;
+  line-height: 1.5;
+  color: var(--ink);
+  orphans: 3;
+  widows: 3;
+}
+
+/* ------------------------------------------------------------------ cover */
+
+.cover {
+  page: cover;
+  break-after: page;
+  height: 297mm;                 /* full A4 height, since @page cover has no margin */
+  padding: 40mm 24mm;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* A white backing plate keeps the logo's dark wordmark legible against both
+ * cover treatments regardless of their own background color. */
+.cover-logo {
+  position: absolute;
+  top: 40mm;
+  left: 24mm;
+  display: inline-flex;
+  background: #fff;
+  border-radius: 2mm;
+  padding: 3mm 5mm;
+}
+.cover-logo svg { display: block; height: 8mm; width: auto; }
+/* Raster logos are usually crests or icons with their own padding, so they
+ * get more height than a vector wordmark; the width cap stops a wide banner
+ * from spanning the page. */
+.cover-logo img { display: block; height: 14mm; width: auto; max-width: 70mm; object-fit: contain; }
+
+/* The generic heading rules set a blue that would land on the blue cover.
+ * `inherit` puts the cover's own verified foreground back -- this is the pair
+ * check_contrast.py calls "cover-blue title", and the cascade is the one way it
+ * can be violated without the check noticing. */
+.cover h1, .cover h2, .cover p { color: inherit; }
+
+.cover-blue { background: #fff; color: var(--ink); }
+.cover-blue .subtitle,
+.cover-blue .meta,
+.cover-blue .legal { color: var(--slate); }
+.cover-blue a { color: var(--blue); }
+
+.cover-light { background: var(--info-bg); color: var(--blue-deep); }
+.cover-light .subtitle,
+.cover-light .meta,
+.cover-light .legal { color: var(--slate); }
+.cover-light a { color: var(--blue); }
+
+.cover h1 {
+  margin: 0 0 4mm;
+  font-size: 34pt;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.4pt;
+  border: 0;
+  padding: 0;
+}
+
+.cover .subtitle {
+  margin: 0 0 14mm;
+  font-size: 15pt;
+  font-weight: 400;
+}
+
+/* Never `opacity` for secondary cover text: dimming white to 75% looks fine on
+ * screen and measures under the AA floor, and it lands on exactly the smallest
+ * line on the page. These are explicit, verified colors instead. */
+.cover .meta { margin: 0 0 8mm; font-size: 10pt; }
+.cover .legal { margin: 0; font-size: 8.5pt; line-height: 1.45; max-width: 120mm; }
+
+/* --------------------------------------------------------------- contents */
+
+.toc { break-after: page; }
+
+.toc h1 {
+  font-size: 20pt;
+  color: var(--blue-deep);
+  margin: 0 0 6mm;
+  border: 0;
+  padding: 0;
+}
+
+.toc ul { list-style: none; margin: 0; padding: 0; }
+
+.toc li {
+  font-size: 9.5pt;
+  line-height: 1.45;
+  break-inside: avoid;
+}
+
+.toc a { color: var(--ink); text-decoration: none; }
+
+/* A part heading is the top level of the navigation, so it reads as a header
+ * inside the contents list rather than as another entry. */
+.toc .toc-part {
+  margin: 5mm 0 1.5mm;
+  font-size: 11pt;
+  font-weight: 700;
+  border-bottom: 0.5pt solid var(--rule);
+  padding-bottom: 1mm;
+}
+.toc .toc-part a { color: var(--blue-deep); }
+
+.toc .toc-d1 { padding-left: 0; }
+.toc .toc-d2 { padding-left: 6mm; }
+.toc .toc-d3 { padding-left: 12mm; }
+.toc .toc-d4 { padding-left: 18mm; }
+.toc .toc-d5 { padding-left: 24mm; }
+.toc .toc-d3 a,
+.toc .toc-d4 a,
+.toc .toc-d5 a { color: var(--slate); }
+
+/* -------------------------------------------------------------- headings */
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--sans);
+  line-height: 1.25;
+  break-after: avoid;            /* never leave a heading alone at a page foot */
+  break-inside: avoid;
+  color: var(--blue);
+}
+
+/* Part headings start a page: they are the spine of the document, and the
+ * reader flipping through should be able to find them without the contents. */
+h1.part {
+  break-before: page;
+  font-size: 26pt;
+  color: var(--blue-deep);
+  margin: 0 0 8mm;
+  padding-bottom: 3mm;
+  border-bottom: 2pt solid var(--blue);
+}
+
+h2 {
+  font-size: 17pt;
+  color: var(--blue-deep);
+  margin: 10mm 0 3mm;
+  padding-top: 2mm;
+  border-top: 0.5pt solid var(--rule);
+}
+
+/* The first page of a part follows the part title's own rule, so its top border
+ * would read as a doubled line. */
+h1.part + h2 { border-top: 0; margin-top: 0; padding-top: 0; }
+
+h3 { font-size: 13.5pt; margin: 7mm 0 2mm; }
+h4 { font-size: 11.5pt; margin: 6mm 0 2mm; }
+h5, h6 { font-size: 10.5pt; margin: 5mm 0 2mm; color: var(--slate); }
+
+/* ------------------------------------------------------------------ prose */
+
+p { margin: 0 0 2.6mm; }
+
+a { color: var(--blue); text-decoration: none; }
+
+/* A `/broken/` reference in the source has no destination to link to, so the
+ * text is kept and marked as prose rather than dressed up as a working link. */
+a.dead-link, .dead-link { color: var(--slate); text-decoration: none; }
+
+/* The page's frontmatter description: on the site it sits under the title and
+ * is often the only sentence that says what the page is for. */
+.standfirst {
+  margin: 0 0 4mm;
+  font-size: 11pt;
+  line-height: 1.45;
+  color: var(--slate);
+}
+
+ul, ol { margin: 0 0 2.6mm; padding-left: 6mm; }
+li { margin: 0 0 1mm; }
+li > ul, li > ol { margin-top: 1mm; }
+
+blockquote {
+  margin: 3mm 0;
+  padding: 0 0 0 4mm;
+  border-left: 2pt solid var(--rule);
+  color: var(--slate);
+}
+
+hr { border: 0; border-top: 0.5pt solid var(--rule); margin: 6mm 0; }
+
+strong { font-weight: 700; }
+
+mark { padding: 0 0.5mm; }
+
+/* ------------------------------------------------------------------- code */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 0.3mm 1mm;
+  border-radius: 1pt;
+  /* A long identifier or URL in inline code must be allowed to break, or it
+   * pushes the whole line past the page edge. */
+  word-break: break-word;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 0.5pt solid var(--rule);
+  border-left: 2pt solid var(--blue);
+  border-radius: 2pt;
+  padding: 2.5mm 3mm;
+  margin: 0 0 3.5mm;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  /* Wrapping rather than clipping: print has no horizontal scrollbar, so an
+   * unwrapped sample loses its right-hand side with no indication it did. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  word-break: inherit;
+}
+
+/* `{% code title="..." %}` becomes a caption above the block. */
+.codetitle {
+  margin: 0 0 -1.5mm;
+  font-size: 8.5pt;
+  color: var(--slate);
+}
+.codetitle code { background: none; padding: 0; }
+
+/* ---------------------------------------------------------------- callouts */
+
+.hint {
+  margin: 3.5mm 0;
+  padding: 2.5mm 3.5mm;
+  border-left: 2.5pt solid var(--blue);
+  border-radius: 2pt;
+  background: var(--info-bg);
+}
+/* Callouts are allowed to break across pages on purpose: a long one forced to
+ * stay whole leaves most of a page blank, and several here run past half a
+ * page. */
+.hint > :first-child { margin-top: 0; }
+.hint > :last-child { margin-bottom: 0; }
+
+.hint-info { background: var(--info-bg); border-color: var(--blue); }
+.hint-success { background: var(--success-bg); border-color: var(--green); }
+.hint-warning { background: var(--warning-bg); border-color: var(--amber); }
+.hint-danger { background: var(--danger-bg); border-color: var(--red); }
+
+/* The severity word itself, so the distinction survives greyscale. */
+.hint-info > p:first-child > strong:first-child { color: var(--blue); }
+.hint-success > p:first-child > strong:first-child { color: var(--green); }
+.hint-warning > p:first-child > strong:first-child { color: var(--amber); }
+.hint-danger > p:first-child > strong:first-child { color: var(--red); }
+
+/* -------------------------------------------------------- tabs and steps */
+
+/* Tabs cannot be interactive on paper, so every panel prints in sequence with
+ * its label. */
+.tabs { margin: 3.5mm 0; }
+
+.tab {
+  margin: 0 0 2.5mm;
+  padding: 0 0 0 3.5mm;
+  border-left: 1pt solid var(--rule);
+}
+.tab > p:first-child > strong:first-child { color: var(--blue); }
+.tab > :first-child { margin-top: 0; }
+
+.stepper { margin: 3.5mm 0; }
+
+.step {
+  margin: 0 0 3mm;
+  padding: 0 0 0 4mm;
+  border-left: 1.5pt solid var(--blue);
+}
+.step > p:first-child > strong:first-child {
+  color: var(--blue-deep);
+  font-size: 9.5pt;
+  letter-spacing: 0.2pt;
+  text-transform: uppercase;
+}
+.step > :first-child { margin-top: 0; }
+
+/* --------------------------------------------- references, embeds, files */
+
+.pageref, .apiref, .embed, .filelink {
+  margin: 3.5mm 0;
+  padding: 2.5mm 3.5mm;
+  background: var(--neutral-bg);
+  border: 0.5pt solid var(--rule);
+  border-radius: 2pt;
+  break-inside: avoid;
+}
+
+.pageref > p, .apiref > p, .embed > p, .filelink > p { margin: 0; }
+.pageref > p + p, .apiref > p + p { margin-top: 1.5mm; }
+
+/* A page reference is a navigation affordance on the site; in print it reads as
+ * a pointer, so it is labelled as one. */
+.pageref > p:first-child::before {
+  content: "See: ";
+  color: var(--slate);
+  font-weight: 700;
+}
+
+.apiref > p:first-child > strong { color: var(--blue-deep); }
+.apiref { font-size: 9.5pt; }
+
+.embed, .filelink { font-size: 9.5pt; word-break: break-word; }
+
+/* ------------------------------------------------------------------ cards */
+
+/* GitBook card grids linearize: a printed page is one column, and the cards
+ * carry the front-page navigation for the whole space. */
+ul.cards {
+  list-style: none;
+  margin: 4mm 0;
+  padding: 0;
+}
+
+ul.cards > li.card {
+  margin: 0 0 2.5mm;
+  padding: 3mm 3.5mm;
+  background: var(--neutral-bg);
+  border: 0.5pt solid var(--rule);
+  border-radius: 2pt;
+  break-inside: avoid;
+}
+
+.card-title {
+  margin: 0 0 1mm;
+  font-size: 11pt;
+  font-weight: 700;
+}
+.card-title a, .card-title strong { color: var(--blue); }
+
+/* GitBook link buttons are written back to back with no whitespace, so
+   without this a row of them prints as one run-on link ("Sign upLog in"). */
+a.button { margin-right: 0.8em; }
+.card ul { margin: 0; padding-left: 5mm; }
+.card > div { font-size: 9.5pt; }
+
+/* ----------------------------------------------------------------- tables */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 3.5mm 0;
+  font-size: 9pt;
+  /* `auto` lets a wide column give way instead of forcing the table past the
+   * page edge; `break-word` handles the long identifiers in the reference
+   * tables. */
+  table-layout: auto;
+  word-break: break-word;
+}
+
+th, td {
+  border: 0.5pt solid var(--rule);
+  padding: 1.5mm 2mm;
+  text-align: left;
+  vertical-align: top;
+}
+
+th { background: var(--thead-bg); font-weight: 700; }
+
+/* Rows stay whole where they can; the table itself is free to break, since
+ * several here are longer than a page. */
+tr { break-inside: avoid; }
+thead { display: table-header-group; }
+
+/* ----------------------------------------------------- images and figures */
+
+img {
+  max-width: 100%;
+  height: auto;
+  break-inside: avoid;
+}
+
+figure {
+  margin: 4mm 0;
+  break-inside: avoid;
+  text-align: center;
+}
+
+figcaption {
+  margin-top: 1.5mm;
+  font-size: 8.5pt;
+  color: var(--slate);
+  text-align: center;
+}
+/* GitBook emits an empty `<figcaption>` when an image has no caption. */
+figcaption:empty { display: none; }
+figcaption p { margin: 0; }
+
+/* --------------------------------------------------- expandable and keys */
+
+/* `<details>` is forced open by the preprocessor; without the marker removed it
+ * prints a disclosure triangle that does nothing on paper. */
+details {
+  margin: 3mm 0;
+  padding: 2.5mm 3.5mm;
+  background: var(--neutral-bg);
+  border: 0.5pt solid var(--rule);
+  border-radius: 2pt;
+}
+details > summary {
+  font-weight: 700;
+  margin-bottom: 1.5mm;
+  list-style: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > :last-child { margin-bottom: 0; }
+
+kbd {
+  font-family: var(--sans);
+  font-size: 0.85em;
+  background: var(--neutral-bg);
+  border: 0.5pt solid var(--rule);
+  border-bottom-width: 1.5pt;
+  border-radius: 2pt;
+  padding: 0.2mm 1.2mm;
+  white-space: nowrap;
+}
+
+/* Mermaid renders to inline SVG; until it does, the source must not be styled
+ * as prose. */
+pre.mermaid { border-left-color: var(--teal); text-align: center; }
+pre.mermaid svg { max-width: 100%; height: auto; }
+
+/* Pandoc wraps footnotes in this; they land at the very end of the document. */
+.footnotes {
+  margin-top: 8mm;
+  padding-top: 3mm;
+  border-top: 0.5pt solid var(--rule);
+  font-size: 9pt;
+  color: var(--slate);
+}

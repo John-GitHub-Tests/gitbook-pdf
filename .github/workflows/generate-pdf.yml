@@ -1,0 +1,77 @@
+name: Generate PDF
+
+# Build a PDF on demand: Actions -> Generate PDF -> Run workflow. The PDF is
+# attached to the run as the `pdf` artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      space:
+        description: 'Space directory to build (contains SUMMARY.md)'
+        required: true
+        default: 'examples/product-docs'
+        type: string
+      cover-color:
+        description: 'Cover color as a hex code, e.g. #0043CE (blank = white)'
+        required: false
+        type: string
+      logo:
+        description: 'Cover logo file in this repo, e.g. assets/logo.png (SVG, PNG, JPG, WebP or GIF; blank = no logo)'
+        required: false
+        type: string
+      version-label:
+        description: 'Cover label, e.g. "Release 4.2" (default: today''s date)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # Checked here too, not only in build.py, so a typo fails in seconds
+      # with a plain message instead of after the tool install steps.
+      - name: Check the logo file
+        if: inputs.logo != ''
+        env:
+          LOGO: ${{ inputs.logo }}
+        run: |
+          set -euo pipefail
+          [[ -f "$LOGO" ]] || {
+            echo "::error::no file at '$LOGO' in this repo -- commit the logo first, then give its path"; exit 1; }
+          shopt -s nocasematch
+          [[ "$LOGO" =~ \.(svg|png|jpe?g|webp|gif)$ ]] || {
+            echo "::error::the logo must be an SVG, PNG, JPG, WebP or GIF file"; exit 1; }
+
+      - id: pdf
+        uses: ./
+        with:
+          space: ${{ inputs.space }}
+          cover-color: ${{ inputs.cover-color }}
+          logo-path: ${{ inputs.logo }}
+          version-label: ${{ inputs.version-label }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pdf
+          path: ${{ steps.pdf.outputs.pdf-path }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Summary
+        env:
+          PDF: ${{ steps.pdf.outputs.pdf-path }}
+        run: |
+          python3 - "$PDF" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, os, sys
+          pdf = sys.argv[1]
+          meta = json.load(open(pdf[:-4] + ".json"))
+          print(f"### {os.path.basename(pdf)}\n")
+          print(f"{meta['doc_pages']} documentation pages, {meta['pdf_pages']} PDF "
+                f"pages, {meta['size_mb']} MB. Download it from **Artifacts** below.")
+          PY

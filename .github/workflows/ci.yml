@@ -1,0 +1,40 @@
+name: CI
+
+# The tool's own checks: unit tests for the preprocessor, then the action run
+# end to end against an example space, exactly as a customer's workflow would
+# call it. The PDF it produces is uploaded as the sample of what you get.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        run: python3 -m unittest discover -s pdf/tests -v
+      - name: WCAG AA contrast of the default palette
+        run: python3 pdf/check_contrast.py
+
+  example:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - id: pdf
+        uses: ./
+        with:
+          space: examples/product-docs
+          output-name: sample-product-docs.pdf
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sample-pdf
+          path: ${{ steps.pdf.outputs.pdf-path }}
+          if-no-files-found: error
