@@ -107,7 +107,7 @@ and `{% hint %}` inside a fenced example is content, not markup.
 | card tables (`data-view="cards"`) | a list of cards; see below |
 | `<picture>` | collapsed to its light-mode `<img>` |
 | `<details>` | forced open |
-| `<i class="fa-…">` | inline SVG (Font Awesome Free); dropped if not in the free set |
+| `<i class="fa-…">` | inline SVG from Font Awesome Free (solid, then brands for logos like `fa-github`); dropped if neither has it |
 | `<button data-action="ask">` | dropped (GitBook Assistant buttons) |
 | `<span data-option>` / emoji spans | unwrapped |
 | ` ```mermaid ` fences | rendered by Mermaid in the browser |
@@ -281,7 +281,7 @@ eye in a long document:
 | PDF pages ≥ documentation pages | Scale-free: a fixed floor would falsely fail a two-page space |
 | no `/broken/` destinations | A dead reference reached a real link |
 | no `file://` destinations | A link points at the build machine's disk |
-| no `app.gitbook.com` destinations (`strict` only) | An editor URL that needs a login; gated by `strict` because another space may genuinely have no mapping |
+| no space editor links, `app.gitbook.com/…/s/<id>` (`strict` only) | An unmapped cross-space reference that needs a login; gated by `strict` because another space may genuinely have no mapping. Other `app.gitbook.com` pages are real destinations and pass |
 | no `.md`-suffixed links into `webBase` | A page rewritten to the wrong form; some sites soft-404 these |
 | `/Outlines` present | Bookmarks come from one Chrome flag and are easy to lose silently |
 | internal destinations > 0 | The contents list is actually clickable |
@@ -307,9 +307,10 @@ once printed wrong.
   levels**.
 - **Font Awesome icons need network access at build time**, unlike the other
   dependencies. Each icon is fetched once and cached in
-  `pdf/vendor/fontawesome/`. With no network, or an icon from GitBook's larger
-  Pro set rather than the ~2000 free icons, it's dropped with a one-per-name
-  warning. Icons are Font Awesome Free,
+  `pdf/vendor/fontawesome/`, looked up in the free solid set and then the free
+  brands set. An icon only in GitBook's larger Pro set (e.g. `sparkles`) is
+  dropped with a one-per-name warning; with no network it's dropped for that
+  build only and retried on the next. Icons are Font Awesome Free,
   [CC BY 4.0](https://fontawesome.com/license/free).
 
 ## Files

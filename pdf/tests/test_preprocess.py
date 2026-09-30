@@ -9,6 +9,7 @@ spaces in examples/) that once printed wrong without any check noticing.
 import os
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -72,6 +73,59 @@ class UnrecognizedMarkers(unittest.TestCase):
         gp.convert_blocks('{% hint style="info" %}\nx\n{% endhint %}\n'
                           '{% if visitor.claims.x %}y{% endif %}')
         self.assertEqual(gp.unrecognized_markers, {})
+
+
+    def test_embed_and_file_closers_are_not_recorded(self):
+        gp.convert_blocks('{% embed url="https://example.com" %}\nCaption\n'
+                          '{% endembed %}\n{% file src="a.pdf" %}\n'
+                          '{% endfile %}')
+        self.assertEqual(gp.unrecognized_markers, {})
+
+
+class FontAwesomeIcons(unittest.TestCase):
+    """Network is faked: each set answers from `self.sets`, 404 otherwise."""
+
+    def setUp(self):
+        import tempfile
+        self.sets = {}
+        self.requested = []
+        cache = unittest.mock.patch.object(gp, "FA_ICON_CACHE_DIR",
+                                           tempfile.mkdtemp())
+        net = unittest.mock.patch.object(gp.urllib.request, "urlopen",
+                                         self.fake_urlopen)
+        cache.start()
+        net.start()
+        self.addCleanup(cache.stop)
+        self.addCleanup(net.stop)
+
+    def fake_urlopen(self, url, timeout=None):
+        import io
+        self.requested.append(url)
+        icon_set, name = url.rsplit("/", 2)[-2:]
+        body = self.sets.get((icon_set, name))
+        if body is None:
+            raise gp.urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        return io.BytesIO(body.encode())
+
+    def test_brand_icon_found_after_solid_misses(self):
+        self.sets[("brands", "github.svg")] = '<svg viewBox="0 0 1 1"><path/></svg>'
+        self.assertEqual(gp._resolve_fa_icon("github"), ("0 0 1 1", "<path/>"))
+        self.assertEqual([u.rsplit("/", 2)[-2] for u in self.requested],
+                         ["solid", "brands"])
+
+    def test_icon_in_no_free_set_is_remembered_as_absent(self):
+        self.assertIsNone(gp._resolve_fa_icon("sparkles"))
+        self.requested.clear()
+        self.assertIsNone(gp._resolve_fa_icon("sparkles"))
+        self.assertEqual(self.requested, [])
+
+    def test_network_failure_is_not_remembered(self):
+        def offline(url, timeout=None):
+            raise gp.urllib.error.URLError("offline")
+        with unittest.mock.patch.object(gp.urllib.request, "urlopen", offline):
+            self.assertIsNone(gp._resolve_fa_icon("book"))
+        self.sets[("solid", "book.svg")] = '<svg viewBox="0 0 2 2"><g/></svg>'
+        self.assertEqual(gp._resolve_fa_icon("book"), ("0 0 2 2", "<g/>"))
 
 
 class AssistantButtons(unittest.TestCase):

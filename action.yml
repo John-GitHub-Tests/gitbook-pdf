@@ -321,12 +321,13 @@ runs:
           exit 1
         fi
 
-        # `app.gitbook.com` is GitBook's own editor -- it resolves for a
-        # logged-in editor, not a PDF reader. A surviving link there means a
-        # cross-space reference GitBook stores as an editor URL wasn't mapped
-        # to a real destination (see pdf.config.json's spaceIds in
-        # pdf/README.md). Generic across any GitBook space, unlike the check
-        # below: this domain isn't config-dependent.
+        # A space editor URL (`app.gitbook.com/[o/<org>/]s/<space-id>/...`)
+        # resolves for a logged-in editor, not a PDF reader. One surviving
+        # means a cross-space reference GitBook stores in editor form wasn't
+        # mapped to a real destination (see pdf.config.json's spaceIds in
+        # pdf/README.md). Only that shape counts: other app.gitbook.com pages
+        # (`/account`, sign-in) are real destinations that docs about GitBook
+        # itself link to on purpose.
         #
         # Gated by strict, not unconditional like /broken/ and file:// above:
         # those two are always defects, but this space may legitimately
@@ -336,9 +337,9 @@ runs:
         # draw the same line, and this is that same kind of check, just run
         # against the artifact instead of the pre-render markdown.
         if [[ "$STRICT" == "true" ]] \
-           && grep -aoE '/URI *\([^)]*app\.gitbook\.com[^)]*\)' /tmp/qdf.pdf | sort -u > /tmp/editorurls.txt \
+           && grep -aoE '/URI *\(https?://app\.gitbook\.com/(o/[^/)]+/)?s/[^)]*\)' /tmp/qdf.pdf | sort -u > /tmp/editorurls.txt \
            && [[ -s /tmp/editorurls.txt ]]; then
-          echo "::error::$(wc -l < /tmp/editorurls.txt) app.gitbook.com editor link(s) reached $pdf"
+          echo "::error::$(wc -l < /tmp/editorurls.txt) GitBook space editor link(s) reached $pdf -- map them in pdf.config.json's spaceIds, or set strict: false"
           head -5 /tmp/editorurls.txt
           exit 1
         fi

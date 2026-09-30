@@ -194,6 +194,9 @@ CREF_OPEN = re.compile(r"\{%\s*content-ref\s+url=[\"'](.*?)[\"'].*?%\}")
 CREF_CLOSE = re.compile(r"\{%\s*endcontent-ref\s*%\}")
 EMBED_OPEN = re.compile(r"\{%\s*embed\s+url=[\"'](.*?)[\"'].*?%\}")
 FILE_OPEN = re.compile(r"\{%\s*file\s+src=[\"'](.*?)[\"'].*?%\}")
+# Both blocks may wrap a caption; the opener carries everything that prints,
+# so the closer is simply dropped (and is not an unrecognized marker).
+EMBED_FILE_CLOSE = re.compile(r"\{%\s*end(?:embed|file)\s*%\}")
 OPENAPI_OPEN = re.compile(r"\{%\s*openapi(-schemas)?\b(.*?)%\}")
 OPENAPI_CLOSE = re.compile(r"\{%\s*endopenapi(?:-schemas)?\s*%\}")
 MD_LINK_INLINE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
@@ -418,6 +421,7 @@ def convert_blocks(text, ref_label=None):
         line = FILE_OPEN.sub(
             lambda mm: f"\n::: {{.filelink}}\nFile: [{_esc_inline(os.path.basename(mm.group(1).rstrip('/')))}]({mm.group(1)})\n:::\n",
             line)
+        line = EMBED_FILE_CLOSE.sub("", line)
 
         # An OpenAPI block is rendered by GitBook from a live specification;
         # there is nothing in the checkout to render, so name the operation and
@@ -607,32 +611,55 @@ FA_ICON_CACHE_DIR = os.path.join(SCRIPT_DIR, "vendor", "fontawesome")
 # larger Pro set, so some names (e.g. multi-word ones) simply are not in the
 # free set and never will be -- not a fetch failure, a real gap.
 FA_ICON_BASE_URL = ("https://raw.githubusercontent.com/FortAwesome/"
-                    "Font-Awesome/6.x/svgs/solid/")
+                    "Font-Awesome/6.x/svgs/")
+# Solid first (GitBook's default style), then brands: logos such as
+# `fa-github` or `fa-x-twitter` exist only in the brands set.
+FA_ICON_SETS = ("solid", "brands")
 FA_ICON_SVG_RE = re.compile(r'viewBox="([^"]+)"[^>]*>(.*)</svg>', re.S)
 
 
+def _fetch_fa_svg(name):
+    """Return the icon's SVG from the first free set that has it.
+
+    `""` means every set answered 404 (a Pro-only or unknown name); `None`
+    means the network failed, which is not recorded, so the next build tries
+    again instead of a transient outage hiding the icon for good.
+    """
+    for icon_set in FA_ICON_SETS:
+        try:
+            with urllib.request.urlopen(
+                    f"{FA_ICON_BASE_URL}{icon_set}/{name}.svg",
+                    timeout=5) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                return None
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+    return ""
+
+
 def _resolve_fa_icon(name):
-    """Return `(viewBox, inner_svg)` for a Font Awesome Free solid icon.
+    """Return `(viewBox, inner_svg)` for a Font Awesome Free icon, or None.
 
     Cached to `vendor/fontawesome/<name>.svg` once fetched, or
-    `<name>.missing` once confirmed absent (a 404, or no network reached) --
-    either way, a name is never looked up twice in one build, and a rerun
-    reuses what a prior one already resolved. Returns None, silently, for a
-    repeat cache hit on an already-known-missing icon; the one-time warning
-    fires only where the miss is first discovered, in `_fa_icon_sub`.
+    `<name>.absent` once no free set has it, so a rerun (or a restored CI
+    cache) reuses what a prior build resolved. The marker was `.missing` when
+    only the solid set was searched; the new name means those old markers
+    are ignored rather than hiding brand icons. Returns None, silently, for
+    a known-absent icon; the one-time warning fires in `_fa_icon_sub`.
     """
     os.makedirs(FA_ICON_CACHE_DIR, exist_ok=True)
     cached = os.path.join(FA_ICON_CACHE_DIR, f"{name}.svg")
-    missing = os.path.join(FA_ICON_CACHE_DIR, f"{name}.missing")
-    if os.path.isfile(missing):
+    absent = os.path.join(FA_ICON_CACHE_DIR, f"{name}.absent")
+    if os.path.isfile(absent):
         return None
     if not os.path.isfile(cached):
-        try:
-            with urllib.request.urlopen(FA_ICON_BASE_URL + name + ".svg",
-                                        timeout=5) as resp:
-                data = resp.read().decode("utf-8")
-        except (urllib.error.URLError, OSError, ValueError):
-            open(missing, "w").close()
+        data = _fetch_fa_svg(name)
+        if data is None:
+            return None
+        if not data:
+            open(absent, "w").close()
             return None
         with open(cached, "w", encoding="utf-8") as fh:
             fh.write(data)
@@ -640,7 +667,7 @@ def _resolve_fa_icon(name):
         data = fh.read()
     m = FA_ICON_SVG_RE.search(data)
     if not m:
-        open(missing, "w").close()
+        open(absent, "w").close()
         return None
     return m.group(1), m.group(2)
 
